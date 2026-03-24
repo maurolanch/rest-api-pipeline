@@ -3,6 +3,7 @@ import logging
 import time
 import json
 import os
+import pandas as pd
 from datetime import datetime
 from requests.exceptions import Timeout, HTTPError, RequestException
 from config import API_TOKEN, API_BASE_URL, EMAIL
@@ -104,8 +105,35 @@ def inspect_data(data: dict):
             print("Ejemplo registro:")
             print(records[0])
 
+def transform_data(data: dict) -> dict:
+    logger.info("Transforming data...")
+
+    # Extracting orders table
+    orders = data.get("tables", {}).get("orders", [])
+    df = pd.DataFrame(orders)
+
+    if df.empty:
+        logger.warning("No orders data to transform")
+        return {}
+    
+    # Transforming order fields
+    df['order_date'] = pd.to_datetime(df['order_date'], errors='coerce')
+    df['total_amount'] = pd.to_numeric(df['total_amount'], errors='coerce')
+
+    # Addind calculated fields
+    df['order_month'] = df['order_date'].dt.to_period('M').astype(str)
+    df['order_year'] = df['order_date'].dt.year
+    df['is_high_value'] = df['total_amount'] > 100
+    df['day_of_week'] = df['order_date'].dt.day_name()
+
+    # Validating transformed data
+    invalid_totals = df['total_amount'].isnull().any()
+    if invalid_totals:
+        logger.warning(f"{invalid_totals} orders have invalid total_amount")
+    
+    logger.info(f"Transformed {len(df)} orders with new fields")
+
+    return data
 
 data = fetch_data_with_retry()
-validate_data(data)
-save_raw_data(data)
-inspect_data(data)
+transform_data(data)
