@@ -1,5 +1,10 @@
 import requests
 import logging
+import time
+import json
+import os
+from datetime import datetime
+from requests.exceptions import Timeout, HTTPError, RequestException
 from config import API_TOKEN, API_BASE_URL, EMAIL
 
 logging.basicConfig(
@@ -29,5 +34,78 @@ def fetch_data(dataset_type: str = 'ecommerce' , rows: int =1000) -> dict:
     
     return data
     
-response = fetch_data()
-print(response)
+
+def fetch_data_with_retry(dataset_type='ecommerce', rows=1000, retries=3):
+    for attempt in range(retries):
+        try:
+            logger.info(f"Attempt {attempt + 1}")
+
+            return fetch_data(dataset_type, rows)
+
+        except Timeout:
+            logger.warning(f"[Attempt {attempt + 1}/{retries}] Timeout occurred")
+
+        except HTTPError as e:
+            status = e.response.status_code if e.response else None
+
+            if 400 <= status < 500:
+                logger.error(f"Client error {status}")
+                raise
+
+            logger.warning(f"Server error {status}")
+
+        except RequestException as e:
+            logger.warning(f"Network error: {e}")
+
+        # backoff (1,2,4...)
+        if attempt < retries - 1:
+            wait = 2 ** attempt
+            logger.info(f"[Attempt {attempt + 1}/{retries}] Retrying in {wait}s...")
+            time.sleep(wait)
+
+    raise Exception("Max retries exceeded")
+
+
+def validate_data(data: dict):
+    if "tables" not in data:
+        raise ValueError("Missing 'tables' key in response")
+
+    for table, records in data["tables"].items():
+        if not isinstance(records, list):
+            logger.warning(f"Table {table} is not a list")
+
+        if len(records) == 0:
+            logger.warning(f"Table {table} is empty")
+
+
+def save_raw_data(data: dict, folder: str = "data/raw"):
+    os.makedirs(folder, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filepath = f"{folder}/dataset_{timestamp}.json"
+
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4)
+
+    logger.info(f"Raw data saved to {filepath}")
+
+
+def inspect_data(data: dict):
+    print("Top-level keys:", data.keys())
+
+    tables = data.get("tables", {})
+    print("\nTables disponibles:", tables.keys())
+
+    for table_name, records in tables.items():
+        print(f"\nTabla: {table_name}")
+        print(f"Cantidad de registros: {len(records)}")
+
+        if records:
+            print("Ejemplo registro:")
+            print(records[0])
+
+
+data = fetch_data_with_retry()
+validate_data(data)
+save_raw_data(data)
+inspect_data(data)
