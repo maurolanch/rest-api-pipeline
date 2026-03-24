@@ -1,6 +1,6 @@
 import requests
 import logging
-from config import API_TOKEN, API_BASE_URL
+from config import API_TOKEN, API_BASE_URL, EMAIL
 
 logging.basicConfig(
     level=logging.INFO,
@@ -13,16 +13,15 @@ def fetch_data(dataset_type: str = 'ecommerce' , rows: int =1000) -> dict:
     """Fetch data from the API."""
     url = f"{API_BASE_URL}/datasets.php"
     params = {
-        'type': 'dataset_type',
-        'rows': rows,
-        'token': API_TOKEN
+        'email': EMAIL,
+        'key': API_TOKEN,
+        'type': dataset_type,
+        'rows': rows
     }
-
-    logger.info(f"Fetching rows: {rows} of type: {dataset_type} from API.")
 
     response = requests.get(url, params=params, timeout=30)
 
-    response.raise_for_status()  # Raise an error for bad status codes
+    response.raise_for_status()
 
     data = response.json()
 
@@ -30,3 +29,5 @@ def fetch_data(dataset_type: str = 'ecommerce' , rows: int =1000) -> dict:
     
     return data
     
+response = fetch_data()
+print(response)
