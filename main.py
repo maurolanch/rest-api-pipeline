@@ -1,10 +1,8 @@
 import requests
 import logging
 import time
-import json
 import os
 import pandas as pd
-from datetime import datetime
 from requests.exceptions import Timeout, HTTPError, RequestException
 from config import API_TOKEN, API_BASE_URL, EMAIL
 
@@ -67,44 +65,7 @@ def fetch_data_with_retry(dataset_type='ecommerce', rows=1000, retries=3):
     raise Exception("Max retries exceeded")
 
 
-def validate_data(data: dict):
-    if "tables" not in data:
-        raise ValueError("Missing 'tables' key in response")
-
-    for table, records in data["tables"].items():
-        if not isinstance(records, list):
-            logger.warning(f"Table {table} is not a list")
-
-        if len(records) == 0:
-            logger.warning(f"Table {table} is empty")
-
-
-def save_raw_data(data: dict, folder: str = "data/raw"):
-    os.makedirs(folder, exist_ok=True)
-
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filepath = f"{folder}/dataset_{timestamp}.json"
-
-    with open(filepath, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4)
-
-    logger.info(f"Raw data saved to {filepath}")
-
-
-def inspect_data(data: dict):
-    print("Top-level keys:", data.keys())
-
-    tables = data.get("tables", {})
-    print("\nTables disponibles:", tables.keys())
-
-    for table_name, records in tables.items():
-        print(f"\nTabla: {table_name}")
-        print(f"Cantidad de registros: {len(records)}")
-
-        if records:
-            print("Ejemplo registro:")
-            print(records[0])
-
+# Transforming the data to add calculated fields and ensure correct data types
 def transform_data(data: dict) -> dict:
     logger.info("Transforming data...")
 
@@ -133,7 +94,68 @@ def transform_data(data: dict) -> dict:
     
     logger.info(f"Transformed {len(df)} orders with new fields")
 
-    return data
+    return df
 
-data = fetch_data_with_retry()
-transform_data(data)
+# Function to save the transformed DataFrame in parquet format partitioned by year and month
+def save_partitioned_parquet(
+    df: pd.DataFrame,
+    output_base: str = "output/orders",
+    date_column: str = "order_date"
+) -> None:
+    """
+    Stores a DataFrame in parquet format partitioned by year and month.
+
+    Args:
+        df (pd.DataFrame): Input DataFrame
+        output_base (str): Base route for output (e.g. "output/orders")    
+        date_column (str): Partition column (default: "order_date")
+    """
+
+    # Creating partitions
+    for (year, month), group in df.groupby(["order_year", "order_month"]):
+
+        partition_path = os.path.join(
+            output_base,
+            f"order_year={year}",
+            f"order_month={month}"
+        )
+
+        os.makedirs(partition_path, exist_ok=True)
+
+        file_path = os.path.join(partition_path, "data.parquet")
+
+        group.to_parquet(file_path, index=False)
+
+        print(f"Saved: {file_path}")
+
+# Main pipeline function to orchestrate the ETL process
+def main():
+    """Main pipeline function."""
+    logger.info("=" * 50)
+    logger.info("API Pipeline - Starting...")
+    logger.info("=" * 50)
+    
+    try:
+        # Extract
+        raw_data = fetch_data_with_retry(rows=5000)
+        
+        # Transform
+        df = transform_data(raw_data)
+        
+        if df.empty:
+            logger.error("There is no data to save after transformation. Exiting pipeline.")
+            return
+        
+        # Load
+        save_partitioned_parquet(df)
+        
+        logger.info("=" * 50)
+        logger.info("Pipeline completed successfully!")
+        logger.info("=" * 50)
+        
+    except Exception as e:
+        logger.error(f"Pipeline has failed: {e}")
+        raise
+
+if __name__ == "__main__":
+    main()
